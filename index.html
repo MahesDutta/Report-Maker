@@ -1,0 +1,804 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dispatch Invoice Report Generator</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+<style>
+:root{--navy:#142d4e;--blue:#235a91;--pale:#eef4fa;--ink:#1c2938;--muted:#637286;--line:#d8e0e9;--green:#18794e;--amber:#9a6200;--red:#b42318}
+*{box-sizing:border-box}body{margin:0;background:#f3f6fa;color:var(--ink);font:14px/1.5 Inter,system-ui,-apple-system,Segoe UI,Arial,sans-serif}
+.shell{max-width:1220px;margin:32px auto;padding:0 18px}.hero{background:linear-gradient(120deg,#142d4e,#235a91);color:#fff;border-radius:18px;padding:27px 30px;box-shadow:0 12px 30px #142d4e22}
+.eyebrow{text-transform:uppercase;letter-spacing:.13em;font-size:11px;opacity:.78;font-weight:700}.hero h1{margin:8px 0 7px;font-size:27px}.hero p{margin:0;max-width:850px;color:#e0eaf5}
+.panel{background:#fff;border:1px solid var(--line);border-radius:16px;padding:21px;margin-top:17px;box-shadow:0 4px 18px #203c5a0a}
+.upload{border:2px dashed #9db4cb;background:#f8fbfe;border-radius:13px;padding:25px;text-align:center}.upload input{display:block;margin:14px auto 0;max-width:100%}
+.btn{border:0;background:var(--blue);color:#fff;padding:11px 18px;border-radius:9px;font-weight:700;cursor:pointer}.btn:disabled{opacity:.45;cursor:not-allowed}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.muted{color:var(--muted)}.small{font-size:12px}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:16px}.stat{background:var(--pale);border-radius:11px;padding:13px}.stat b{display:block;font-size:21px;color:var(--navy);overflow-wrap:anywhere}.stat span{color:var(--muted);font-size:12px}
+.status{padding:12px 14px;border-radius:10px;margin-top:14px;display:none;white-space:pre-wrap}.status.error{display:block;background:#fff1f0;color:var(--red)}.status.ok{display:block;background:#edf8f2;color:var(--green)}.status.warn{display:block;background:#fff7e6;color:var(--amber)}
+h2{font-size:17px;margin:0 0 12px;color:var(--navy)}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:10px;max-height:480px}
+table{border-collapse:collapse;width:100%;font-size:12px;white-space:nowrap}th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left}th{background:#edf3f9;color:var(--navy);position:sticky;top:0;z-index:1}tr:last-child td{border-bottom:0}
+.tag{display:inline-block;border-radius:99px;background:#e9f1fa;color:#214f7c;padding:3px 8px;font-size:11px;font-weight:700}.rules{display:grid;grid-template-columns:1fr 1fr;gap:10px}.rule{padding:12px;border:1px solid var(--line);border-radius:10px}.rule b{display:block;color:var(--navy);margin-bottom:3px}
+.warn-list{margin:8px 0 0;padding-left:20px}.warn-list li{margin:3px 0}.footer{margin:18px 2px 35px;color:var(--muted);font-size:12px}
+@media(max-width:720px){.shell{margin:15px auto;padding:0 11px}.hero{padding:21px}.hero h1{font-size:22px}.stats{grid-template-columns:1fr 1fr}.rules{grid-template-columns:1fr}.panel{padding:16px}}
+</style>
+</head>
+<body>
+<main class="shell">
+<header class="hero">
+  <div class="eyebrow">Dispatch reporting tool · Version 2</div>
+  <h1>Invoice Report Generator</h1>
+  <p>Upload the SAP/raw Excel export and generate a dispatch report in the supplied report structure. All processing happens locally in this browser; the workbook is not uploaded to a server.</p>
+</header>
+
+<section class="panel">
+  <h2>1. Upload raw Excel file</h2>
+  <div class="upload">
+    <strong>Select the raw SAP export (.xlsx / .xls)</strong>
+    <div class="muted small">The tool detects the header row and worksheet. Required fields include invoice reference, party, state, vehicle, material, quantity, rate, Incoterms, Freight Inclusive, transporter and Net Sales.</div>
+    <input id="file" type="file" accept=".xlsx,.xls,.xlsm">
+  </div>
+  <div class="row" style="margin-top:15px">
+    <button class="btn" id="generate" disabled>Generate Excel report</button>
+    <span class="muted small" id="fileName">No file selected</span>
+  </div>
+  <div id="status" class="status" role="status" aria-live="polite"></div>
+  <div id="stats" class="stats" hidden></div>
+</section>
+
+<section class="panel" id="previewPanel" hidden>
+  <div class="row" style="justify-content:space-between">
+    <h2>2. Report preview</h2>
+    <span class="tag" id="previewTag">Ready</span>
+  </div>
+  <p class="muted small">Preview shows normalized invoice details, material rows, rates and freight. Before download, the workbook is serialized, reopened and checked for cached formula results, totals and key formatting.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>SL</th><th>Invoice No.</th><th>Party</th><th>Address / State</th><th>Vehicle No.</th><th>Material</th><th>Qty (MT)</th><th>Basic Rate</th><th>GST %</th><th>Freight Rate</th><th>Freight Amount</th><th>Remarks</th></tr></thead>
+      <tbody id="previewBody"></tbody>
+    </table>
+  </div>
+  <div class="row" style="margin-top:15px">
+    <button class="btn" id="download">Download formatted Excel (.xlsx)</button>
+    <span class="muted small" id="downloadNote"></span>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>3. Applied conversion rules</h2>
+  <div class="rules">
+    <div class="rule"><b>Invoice and party</b><span class="muted small">Rows are grouped by invoice reference. LIMIT and LIMITED are equivalent; a trailing LIMIT is displayed as LIMITED.</span></div>
+    <div class="rule"><b>Address / state</b><span class="muted small">State names are trimmed, normalized to uppercase, and administrative suffixes such as “(New)” are removed to match the supplied report.</span></div>
+    <div class="rule"><b>Invoice order</b><span class="muted small">Invoice groups retain the order found in the raw SAP export. The sample reference uses a different manual order, and no reliable sort field identifies that sequence.</span></div>
+    <div class="rule"><b>Vehicle number</b><span class="muted small">Recognized Indian registration numbers are standardized with a hyphen before the last four digits, e.g. AP16TJ-5656.</span></div>
+    <div class="rule"><b>Material standardization</b><span class="muted small">Spacing and bracket variations are normalized, e.g. TMT BAR 8MM (BOF) → 8mm[BOF]. Different rates remain separate rows.</span></div>
+    <div class="rule"><b>GST and values</b><span class="muted small">The effective GST rate is inferred from Net Sales when available. This handles intra-state rows where IGST Rate is 0 but total GST is still 18%.</span></div>
+    <div class="rule"><b>FOR freight</b><span class="muted small">For Incoterms = FOR, Freight Inclusive is used as Freight Rate. Freight Amount = Freight Rate × total invoice quantity. Remarks: FOR/transporter.</span></div>
+    <div class="rule"><b>Other transport</b><span class="muted small">SELF BY PARTY → EX BY PARTY. Any other transporter name → EX BY transporter name.</span></div>
+    <div class="rule"><b>Validation</b><span class="muted small">Conflicting party, state, vehicle, transporter or FOR freight-rate values within one invoice are flagged instead of silently producing an unreliable report.</span></div>
+  </div>
+</section>
+<div class="footer">Compatibility: modern Chrome / Edge. The Excel formatting engine loads from jsDelivr, so an internet connection is required when opening the page. Keep the original raw workbook unchanged.</div>
+</main>
+
+<script>
+'use strict';
+
+const $ = id => document.getElementById(id);
+const MAX_FILE_BYTES = 50 * 1024 * 1024;
+let report = null;
+let sourceName = 'dispatch';
+
+const aliases = {
+  reference: ['reference','invoice no','invoice number','inv no','inv.no','billing document'],
+  party: ['sold to party name','party','customer name'],
+  state: ['sold to party state','state','address'],
+  vehicle: ['vehicle number','lorry no','vehicle no','vehicle number '],
+  material: ['material desc','material description','material','size'],
+  qty: ['bill qty','quantity','qty'],
+  incoterms: ['incoterms','incoterm'],
+  basicRate: ['basic rate','rate'],
+  igst: ['igst rate','igst'],
+  netSales: ['net sales','net value','tax inclusive value'],
+  freight: ['freight inclusive','freight rate','freight amount'],
+  transporter: ['transporter name','transporter'],
+  date: ['entry date','date'],
+  cancelRemark: ['cancle remark','cancel remark','cancellation remark'],
+  billingType: ['billing type des.','billing type'],
+  plant: ['plant']
+};
+
+function clean(value) {
+  return value === null || value === undefined ? '' : String(value).trim();
+}
+
+function headerKey(value) {
+  return clean(value).toLowerCase().replace(/[._]/g,' ').replace(/\s+/g,' ').trim();
+}
+
+function numberValue(value, label, rowNumber, required = false) {
+  if (value === '' || value === null || value === undefined) {
+    if (required) throw new Error(`${label} is blank at Excel row ${rowNumber}.`);
+    return null;
+  }
+  const parsed = typeof value === 'number' ? value : Number(String(value).replace(/[,\u20B9\s]/g,''));
+  if (!Number.isFinite(parsed)) throw new Error(`${label} is not numeric at Excel row ${rowNumber}.`);
+  return parsed;
+}
+
+function identifier(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Number.isInteger(value) ? String(value) : String(value).replace(/\.0+$/,'');
+  }
+  return clean(value).replace(/\.0+$/,'');
+}
+
+function findColumns(headers) {
+  const normalized = headers.map(headerKey);
+  const map = {};
+  for (const [field, names] of Object.entries(aliases)) {
+    const index = normalized.findIndex(header => names.includes(header));
+    if (index >= 0) map[field] = index;
+  }
+  const required = ['reference','party','state','vehicle','material','qty','basicRate','incoterms','freight','transporter','netSales'];
+  return {map, missing: required.filter(field => map[field] === undefined)};
+}
+
+function displayParty(value) {
+  return clean(value).replace(/\s+/g,' ').replace(/\bLIMIT\.?$/i,'LIMITED');
+}
+
+function normalizeState(value) {
+  return clean(value)
+    .normalize('NFKC')
+    .replace(/\s+/g,' ')
+    .replace(/\s*\(\s*NEW\s*\)\s*$/i,'')
+    .trim()
+    .toUpperCase();
+}
+
+function compareParty(value) {
+  return displayParty(value).toUpperCase().replace(/\s+/g,' ').trim();
+}
+
+function normalizeMaterial(value) {
+  let text = clean(value).toUpperCase().replace(/\s+/g,' ').trim();
+  if (!text) throw new Error('Material description is blank.');
+  text = text.replace(/^TMT\s*BAR\s*/,'');
+  text = text.replace(/(\d+(?:\.\d+)?)\s*MM\b/g,(_,size)=>`${size}mm`);
+  text = text.replace(/\s*\(\s*/g,'[').replace(/\s*\)\s*/g,']');
+  text = text.replace(/(\d+(?:\.\d+)?mm)\s*-?\s*BOF\b/i,'$1[BOF]');
+  text = text.replace(/\s+/g,'').replace(/\[\[/g,'[').replace(/\]\]/g,']');
+  const sizeMatch = text.match(/^(\d+(?:\.\d+)?mm)(.*)$/i);
+  if (sizeMatch) return sizeMatch[1].toLowerCase() + sizeMatch[2].toUpperCase();
+  return text.toLowerCase();
+}
+
+function normalizeVehicle(value) {
+  const original = clean(value).toUpperCase();
+  const compact = original.replace(/[^A-Z0-9]/g,'');
+  const match = compact.match(/^([A-Z]{2}\d{1,2}[A-Z]{1,3})(\d{4})$/);
+  return match ? `${match[1]}-${match[2]}` : original.replace(/\s+/g,' ');
+}
+
+function isForIncoterm(value) {
+  const term = clean(value).toUpperCase().replace(/[.]/g,'').trim();
+  return /^FOR(?:\b|\/|-|\s)/.test(term) || term === 'FOR';
+}
+
+function isSelfByParty(value) {
+  return clean(value).toUpperCase().replace(/[\s_-]+/g,' ').trim() === 'SELF BY PARTY';
+}
+
+function round(value, digits = 6) {
+  const factor = 10 ** digits;
+  return Math.round((value + Number.EPSILON) * factor) / factor;
+}
+
+function effectiveGstRate(netSales, qty, basicRate, igstRate, rowNumber) {
+  const base = qty * basicRate;
+  if (netSales !== null && netSales > 0 && base > 0) {
+    const inferred = ((netSales / base) - 1) * 100;
+    if (!Number.isFinite(inferred) || inferred < -0.05 || inferred > 100) {
+      throw new Error(`Net Sales does not produce a valid GST rate at Excel row ${rowNumber}.`);
+    }
+    return round(Math.max(0,inferred),2);
+  }
+  if (igstRate !== null && igstRate >= 0) return round(igstRate,2);
+  throw new Error(`Cannot determine the total GST rate at Excel row ${rowNumber}: Net Sales and IGST Rate are unavailable.`);
+}
+
+function findDataSheet(workbook) {
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet || !sheet['!ref']) continue;
+    const rows = XLSX.utils.sheet_to_json(sheet,{header:1,defval:'',raw:true});
+    const headerIndex = rows.findIndex(row => findColumns(row).missing.length === 0);
+    if (headerIndex >= 0) return {sheetName,rows,headerIndex};
+  }
+  throw new Error('Could not find a worksheet with all required SAP columns. Check the column headings and try again.');
+}
+
+function parseWorkbook(buffer) {
+  if (!window.XLSX) throw new Error('The Excel engine did not load. Check your internet connection and reload this page.');
+  const workbook = XLSX.read(buffer,{type:'array',cellDates:true});
+  if (!workbook.SheetNames.length) throw new Error('The workbook has no worksheets.');
+  const selected = findDataSheet(workbook);
+  const rows = selected.rows;
+  const {map} = findColumns(rows[selected.headerIndex]);
+  const invoices = new Map();
+  const warnings = [];
+  let skippedBlankReference = 0;
+  let skippedCancelled = 0;
+  let skippedNonInvoice = 0;
+  let processedRows = 0;
+
+  for (let index = selected.headerIndex + 1; index < rows.length; index++) {
+    const row = rows[index];
+    if (!row || row.every(value => clean(value) === '')) continue;
+    const rowNumber = index + 1;
+    const reference = identifier(row[map.reference]);
+    if (!reference) {
+      const hasTransactionIdentity = [map.party,map.state,map.vehicle,map.material,map.incoterms,map.transporter]
+        .some(column => column !== undefined && clean(row[column]) !== '');
+      if (hasTransactionIdentity) skippedBlankReference++;
+      continue;
+    }
+
+    const cancelRemark = map.cancelRemark === undefined ? '' : clean(row[map.cancelRemark]);
+    if (cancelRemark) { skippedCancelled++; continue; }
+
+    const billingType = map.billingType === undefined ? '' : clean(row[map.billingType]);
+    if (billingType && !/invoice/i.test(billingType)) { skippedNonInvoice++; continue; }
+
+    const partyRaw = clean(row[map.party]);
+    const state = normalizeState(row[map.state]);
+    const vehicleRaw = clean(row[map.vehicle]);
+    const materialRaw = clean(row[map.material]);
+    if (!partyRaw) throw new Error(`Sold to Party Name is blank at Excel row ${rowNumber}.`);
+    if (!state) throw new Error(`Sold to Party State is blank at Excel row ${rowNumber}.`);
+    if (!vehicleRaw) throw new Error(`Vehicle Number is blank at Excel row ${rowNumber}.`);
+
+    const qty = numberValue(row[map.qty],'Bill Qty',rowNumber,true);
+    const basicRate = numberValue(row[map.basicRate],'Basic Rate',rowNumber,true);
+    const netSales = numberValue(row[map.netSales],'Net Sales',rowNumber,false);
+    const igstRate = map.igst === undefined ? null : numberValue(row[map.igst],'IGST Rate',rowNumber,false);
+    if (qty <= 0) throw new Error(`Bill Qty must be greater than zero at Excel row ${rowNumber}.`);
+    if (basicRate < 0) throw new Error(`Basic Rate cannot be negative at Excel row ${rowNumber}.`);
+
+    const gstRate = effectiveGstRate(netSales,qty,basicRate,igstRate,rowNumber);
+    const incoterm = clean(row[map.incoterms]);
+    const forTerm = isForIncoterm(incoterm);
+    const freightRaw = row[map.freight];
+    const freightRate = numberValue(freightRaw,'Freight Inclusive',rowNumber,false);
+    if (freightRate !== null && freightRate < 0) throw new Error(`Freight Inclusive cannot be negative at Excel row ${rowNumber}.`);
+    const transporter = clean(row[map.transporter]);
+
+    const item = {
+      reference, party:displayParty(partyRaw), partyCompare:compareParty(partyRaw),
+      state, vehicle:normalizeVehicle(vehicleRaw), material:normalizeMaterial(materialRaw),
+      qty, basicRate, gstRate, tax:basicRate*gstRate/100,
+      rate:basicRate*(1+gstRate/100), value:qty*basicRate*(1+gstRate/100),
+      incoterm, forTerm, freightRate,
+      transporter, entryDate:map.date === undefined ? null : row[map.date],
+      sourceRow:rowNumber
+    };
+    if (!invoices.has(reference)) {
+      invoices.set(reference,{
+        reference,party:item.party,partyCompare:item.partyCompare,state,vehicle:item.vehicle,
+        items:[],firstRow:rowNumber
+      });
+    }
+    const invoice = invoices.get(reference);
+    if (invoice.partyCompare !== item.partyCompare) {
+      throw new Error(`Invoice ${reference} has conflicting party names at Excel row ${rowNumber}.`);
+    }
+    if (invoice.state !== item.state) {
+      throw new Error(`Invoice ${reference} has conflicting state values at Excel row ${rowNumber}.`);
+    }
+    if (invoice.vehicle !== item.vehicle) {
+      throw new Error(`Invoice ${reference} has conflicting vehicle numbers at Excel row ${rowNumber}.`);
+    }
+    invoice.items.push(item);
+    processedRows++;
+  }
+
+  if (!invoices.size) throw new Error('No valid invoice rows were found after excluding blank, cancelled and non-invoice rows.');
+
+  const groups = [...invoices.values()];
+  for (const invoice of groups) {
+    const transporters = [...new Set(invoice.items.map(item=>item.transporter).filter(Boolean).map(value=>value.toUpperCase()))];
+    if (transporters.length > 1) throw new Error(`Invoice ${invoice.reference} has multiple transporter names. Correct the raw file before generating the report.`);
+    invoice.transporter = invoice.items.map(item=>item.transporter).find(Boolean) || '';
+
+    const forFlags = [...new Set(invoice.items.map(item=>item.forTerm))];
+    if (forFlags.length > 1) throw new Error(`Invoice ${invoice.reference} mixes FOR and non-FOR Incoterms. Correct the raw file before generating the report.`);
+    invoice.isFor = forFlags[0] === true;
+
+    const incoterms = [...new Set(invoice.items.map(item=>item.incoterm.toUpperCase()).filter(Boolean))];
+    if (incoterms.length > 1) throw new Error(`Invoice ${invoice.reference} has conflicting Incoterms values.`);
+
+    if (invoice.isFor) {
+      if (!invoice.transporter) throw new Error(`Invoice ${invoice.reference} is marked FOR but has no Transporter Name.`);
+      const rates = [...new Set(invoice.items.map(item=>item.freightRate).filter(rate=>rate !== null))];
+      if (!rates.length) throw new Error(`Invoice ${invoice.reference} is marked FOR but Freight Inclusive rate is blank on every line.`);
+      if (rates.length > 1) throw new Error(`Invoice ${invoice.reference} has different Freight Inclusive rates across its material lines. A single invoice-level freight rate is required.`);
+      invoice.freightRate = rates.length ? rates[0] : 0;
+      invoice.remarks = `FOR/${invoice.transporter}`;
+    } else {
+      if (invoice.items.some(item=>item.freightRate !== null && item.freightRate > 0)) {
+        warnings.push(`Invoice ${invoice.reference}: Freight Inclusive has a positive value but Incoterms is not FOR; freight rate was set to 0.`);
+      }
+      invoice.freightRate = 0;
+      invoice.remarks = isSelfByParty(invoice.transporter) ? 'EX BY PARTY' : (invoice.transporter ? `EX BY ${invoice.transporter}` : '');
+      if (!invoice.transporter) warnings.push(`Invoice ${invoice.reference}: Transporter Name is blank; Remarks is left blank.`);
+    }
+
+    invoice.totalQty = invoice.items.reduce((sum,item)=>sum+item.qty,0);
+    invoice.gross = invoice.items.reduce((sum,item)=>sum+item.value,0);
+    invoice.freightAmount = invoice.freightRate * invoice.totalQty;
+
+    const duplicateKeys = new Set();
+    for (const item of invoice.items) {
+      const duplicateKey = `${item.material}|${item.qty}|${item.basicRate}|${item.gstRate}`;
+      if (duplicateKeys.has(duplicateKey)) warnings.push(`Invoice ${invoice.reference}: repeated identical material/quantity/rate line detected; both source rows are retained.`);
+      duplicateKeys.add(duplicateKey);
+    }
+  }
+
+  return {
+    groups, warnings, processedRows, skippedBlankReference, skippedCancelled, skippedNonInvoice,
+    sourceRows:rows.length-selected.headerIndex-1, sheetName:selected.sheetName,
+    firstDate:groups.flatMap(group=>group.items).map(item=>item.entryDate).find(value=>value!==null&&value!=='')
+  };
+}
+
+function dateLabel(data) {
+  const value = data.firstDate;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return `${String(value.getDate()).padStart(2,'0')}.${String(value.getMonth()+1).padStart(2,'0')}.${value.getFullYear()}`;
+  }
+  if (typeof value === 'number' && window.XLSX) {
+    const parsed = XLSX.SSF.parse_date_code(value);
+    if (parsed) return `${String(parsed.d).padStart(2,'0')}.${String(parsed.m).padStart(2,'0')}.${parsed.y}`;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return `${String(parsed.getDate()).padStart(2,'0')}.${String(parsed.getMonth()+1).padStart(2,'0')}.${parsed.getFullYear()}`;
+  }
+  return new Date().toLocaleDateString('en-GB').replaceAll('/','.');
+}
+
+function formatNumber(value,digits=2) {
+  return Number(value).toLocaleString('en-IN',{minimumFractionDigits:digits,maximumFractionDigits:digits});
+}
+
+function showPreview() {
+  const body = $('previewBody');
+  body.replaceChildren();
+  let serial = 0;
+  for (const group of report.groups) {
+    serial++;
+    group.items.forEach((item,index)=>{
+      const tr = document.createElement('tr');
+      const values = [
+        index===0?serial:'', index===0?group.reference:'', index===0?group.party:'',
+        index===0?group.state:'', index===0?group.vehicle:'', item.material,
+        formatNumber(item.qty,3), formatNumber(item.basicRate,2), `${formatNumber(item.gstRate,2)}%`,
+        index===0?formatNumber(group.freightRate,2):'',
+        index===0?formatNumber(group.freightAmount,2):'',
+        index===0?group.remarks:''
+      ];
+      for (const value of values) {
+        const cell = document.createElement('td');
+        cell.textContent = value;
+        tr.appendChild(cell);
+      }
+      body.appendChild(tr);
+    });
+  }
+  const invoiceCount = report.groups.length;
+  const lineCount = report.groups.reduce((sum,group)=>sum+group.items.length,0);
+  const totalQty = report.groups.reduce((sum,group)=>sum+group.totalQty,0);
+  const totalValue = report.groups.reduce((sum,group)=>sum+group.gross,0);
+  $('stats').hidden = false;
+  $('stats').innerHTML =
+    `<div class="stat"><b>${invoiceCount}</b><span>Invoices</span></div>`+
+    `<div class="stat"><b>${lineCount}</b><span>Material lines</span></div>`+
+    `<div class="stat"><b>${formatNumber(totalQty,3)}</b><span>Total quantity (MT)</span></div>`+
+    `<div class="stat"><b>₹${formatNumber(totalValue,2)}</b><span>Gross value incl. GST</span></div>`;
+  $('previewPanel').hidden = false;
+  $('previewTag').textContent = `${invoiceCount} invoices · ${lineCount} lines`;
+}
+
+function buildWorksheet(data) {
+  const aoa = [];
+  const merges = [];
+  const invoiceFirstRows = [];
+  const pageBreaks = [];
+  const headerRows = [];
+  const secondaryHeaderRows = [];
+  const pageTopRows = [];
+  const pageAccountRows = [];
+  const pages = [];
+  const maxLinesPerPage = 41;
+  let page = [];
+  let pageLineCount = 0;
+
+  for (const group of data.groups) {
+    if (page.length && pageLineCount + group.items.length > maxLinesPerPage) {
+      pages.push(page);
+      page = [];
+      pageLineCount = 0;
+    }
+    page.push(group);
+    pageLineCount += group.items.length;
+  }
+  if (page.length) pages.push(page);
+
+  const thin = {style:'thin',color:{rgb:'000000'}};
+  const allBorders = {left:thin,right:thin,top:thin,bottom:thin};
+  const baseFont = {name:'Calibri',bold:true,size:10,color:{rgb:'000000'}};
+  const titleStyle = {
+    font:{name:'Arial Black',bold:true,size:12,color:{rgb:'000000'}},
+    fill:{patternType:'solid',fgColor:{rgb:'92D050'}},
+    alignment:{horizontal:'center',vertical:'center'},
+    border:allBorders
+  };
+  const headerStyle = {
+    font:baseFont,
+    fill:{patternType:'solid',fgColor:{rgb:'FFFF00'}},
+    alignment:{horizontal:'center',vertical:'center',wrapText:true},
+    border:allBorders
+  };
+  const bodyStyle = {
+    font:baseFont,
+    alignment:{horizontal:'center',vertical:'center',wrapText:true},
+    border:allBorders
+  };
+  const pageLabelStyle = {
+    font:baseFont,
+    fill:{patternType:'solid',fgColor:{rgb:'FFFFFF'}},
+    alignment:{horizontal:'left',vertical:'center'}
+  };
+  const dateStyle = {
+    font:{name:'Calibri',bold:true,size:11,color:{rgb:'000000'}},
+    fill:{patternType:'solid',fgColor:{rgb:'FFFFFF'}},
+    alignment:{horizontal:'center',vertical:'center'}
+  };
+  const accountStyle = {
+    font:baseFont,
+    fill:{patternType:'solid',fgColor:{rgb:'92D050'}},
+    alignment:{horizontal:'center',vertical:'center'},
+    border:{top:thin,bottom:thin}
+  };
+  const numberFormats = {
+    0:'0', 1:'@', 2:'0"/-"', 3:'@',
+    10:'0.00', 11:'0.00', 12:'0.00', 13:'0.00', 14:'0.00',
+    15:'0.00', 16:'0.00', 17:'0', 18:'0', 19:'0.00',
+    20:'0', 21:'0', 22:'0', 23:'@'
+  };
+  const widths = [3.71,11.57,8.57,14.86,20.43,9.71,6.86,11,9.43,11.57,8.43,8.14,9.43,6,8.43,13,9.86,13,10.71,8.43,10.43,9,8.29,8.29,17.29];
+  const header = ['SL No','Agent','Avg. Conv ','Inv.No','Party','Code','Type','Address','Lorry No','Size','Qty','Total Qty.','','','','','Rate','Value','Gross Value','Insurance','Net Value','Freight Rate','Freight Amount','Party Balance  ','Remarks'];
+
+  const appendPageHeader = (pageIndex) => {
+    const rowNumber = aoa.length + 1;
+    pageTopRows.push(pageIndex===0 ? 2 : rowNumber);
+    pageAccountRows.push(pageIndex===0 ? 3 : rowNumber+1);
+    if (pageIndex === 0) {
+      aoa.push(['RASHIDHAN [OMPL-9] [TMT DESPATCH] - PARTY']);
+      aoa.push([` Page No: ${pageIndex+1}`,'','','DATE-',dateLabel(data)]);
+      aoa.push(['','','','','','','','','','A/C-OMPL']);
+      headerRows.push(aoa.length + 1);
+      aoa.push(header);
+      merges.push(
+        {s:{r:0,c:0},e:{r:0,c:24}},
+        {s:{r:1,c:4},e:{r:1,c:7}},
+        {s:{r:2,c:9},e:{r:2,c:11}}
+      );
+    } else {
+      aoa.push([` Page No: ${pageIndex+1}`,'','','DATE-',{f:'E2',v:dateLabel(data)}]);
+      aoa.push(['','','','','','','','','','A/C-OMPL']);
+      headerRows.push(aoa.length + 1);
+      secondaryHeaderRows.push(aoa.length + 1);
+      aoa.push(header);
+      merges.push(
+        {s:{r:rowNumber-1,c:4},e:{r:rowNumber-1,c:7}},
+        {s:{r:rowNumber,c:9},e:{r:rowNumber,c:11}}
+      );
+      pageBreaks.push({id:rowNumber-1,man:1});
+    }
+  };
+
+  let serial = 0;
+  const groupRows = [];
+  pages.forEach((groups,pageIndex)=>{
+    appendPageHeader(pageIndex);
+    for (const group of groups) {
+      serial++;
+      const startExcelRow = aoa.length + 1;
+      invoiceFirstRows.push(startExcelRow);
+      groupRows.push({group,start:startExcelRow,end:startExcelRow+group.items.length-1});
+      for (let itemIndex=0; itemIndex<group.items.length; itemIndex++) {
+        const item = group.items[itemIndex];
+        const first = itemIndex === 0;
+        const row = Array(25).fill('');
+        if (first) {
+          row[0] = serial;
+          row[3] = String(group.reference);
+          row[4] = group.party;
+          row[7] = group.state;
+          row[8] = group.vehicle;
+        }
+        row[9] = item.material;
+        row[10] = item.qty;
+        row[12] = item.basicRate;
+        aoa.push(row);
+      }
+      for (const col of [0,1,2,3,4,5,6,7,8,11,18,19,20,21,22,23,24]) {
+        merges.push({s:{r:startExcelRow-1,c:col},e:{r:startExcelRow+group.items.length-2,c:col}});
+      }
+    }
+  });
+
+  for (const entry of groupRows) {
+    const {group,start,end} = entry;
+    group.items.forEach((item,index)=>{
+      const rowNumber = start + index;
+      const row = aoa[rowNumber-1];
+      const tax = item.basicRate * item.gstRate / 100;
+      const rate = item.basicRate + tax;
+      const value = item.qty * rate;
+      item.tax = tax;
+      item.rate = rate;
+      item.value = value;
+      row[13] = '';
+      row[14] = {f:`(M${rowNumber}+N${rowNumber})*${Number(item.gstRate.toFixed(2))}%`,v:tax};
+      row[15] = {f:`M${rowNumber}+N${rowNumber}+O${rowNumber}`,v:rate};
+      row[16] = {f:`P${rowNumber}`,v:rate};
+      row[17] = {f:`K${rowNumber}*Q${rowNumber}`,v:value};
+    });
+    const invoiceValue = group.items.reduce((sum,item)=>sum+item.value,0);
+    const first = start;
+    group.gross = invoiceValue;
+    group.totalQty = group.items.reduce((sum,item)=>sum+item.qty,0);
+    group.freightAmount = group.freightRate * group.totalQty;
+    aoa[first-1][11] = {f:`SUM(K${start}:K${end})`,v:group.totalQty};
+    aoa[first-1][18] = {f:`SUM(R${start}:R${end})`,v:invoiceValue};
+    aoa[first-1][19] = 0;
+    aoa[first-1][20] = {f:`SUM(S${start}:T${end})`,v:invoiceValue};
+    aoa[first-1][21] = group.freightRate;
+    aoa[first-1][22] = {f:`V${start}*L${start}`,v:group.freightAmount};
+    aoa[first-1][24] = group.remarks;
+  }
+
+  const totalRowNumber = aoa.length + 1;
+  const totalRow = Array(25).fill('');
+  const totalQty = data.groups.reduce((sum,group)=>sum+group.totalQty,0);
+  const totalGross = data.groups.reduce((sum,group)=>sum+group.gross,0);
+  const totalFreight = data.groups.reduce((sum,group)=>sum+group.freightAmount,0);
+  totalRow[11] = {f:`SUM(${invoiceFirstRows.map(row=>`L${row}`).join(',')})`,v:totalQty};
+  totalRow[18] = {f:`SUM(${invoiceFirstRows.map(row=>`S${row}`).join(',')})`,v:totalGross};
+  totalRow[20] = {f:`SUM(${invoiceFirstRows.map(row=>`U${row}`).join(',')})`,v:totalGross};
+  totalRow[22] = {f:`SUM(${invoiceFirstRows.map(row=>`W${row}`).join(',')})`,v:totalFreight};
+  aoa.push(totalRow);
+  aoa.push(Array(25).fill(''));
+  const straightRow = Array(25).fill('');
+  straightRow[20] = 'STRAIGHT';
+  straightRow[23] = 'AVERAGE';
+  aoa.push(straightRow);
+  const bendRow = Array(25).fill('');
+  bendRow[20] = 'BEND';
+  bendRow[23] = 'BASIC';
+  aoa.push(bendRow);
+
+  const worksheet = XLSX.utils.aoa_to_sheet(aoa);
+  worksheet['!merges'] = merges;
+  worksheet['!cols'] = widths.map((width,index)=>({wch:width,hidden:[12,13,14].includes(index)}));
+  const firstDataRows = groupRows.map(entry=>entry.start);
+  worksheet['!rows'] = aoa.map((_,index)=>{
+    const rowNumber = index+1;
+    if (rowNumber===1) return {hpt:16.5};
+    if (headerRows.includes(rowNumber)) return {hpt:secondaryHeaderRows.includes(rowNumber) ? 29.25 : 25.5};
+    if (pageTopRows.includes(rowNumber) || pageAccountRows.includes(rowNumber)) return {hpt:15};
+    if (firstDataRows.includes(rowNumber) && rowNumber===5) return {hpt:25.5};
+    if (rowNumber===totalRowNumber) return {hpt:12.75};
+    if (rowNumber===totalRowNumber+2) return {hpt:13.5};
+    return {hpt:18};
+  });
+  worksheet['!pageSetup'] = {orientation:'landscape',paperSize:9,scale:66};
+  worksheet['!margins'] = {left:0,right:0,top:0,bottom:0,header:0.315,footer:0};
+  worksheet['!autofilter'] = {ref:`J${headerRows[0]}:K${totalRowNumber}`};
+  if (pageBreaks.length) worksheet['!rowBreaks'] = pageBreaks;
+
+  for (let r=0;r<aoa.length;r++) {
+    const rowNumber = r+1;
+    const isHeader = headerRows.includes(rowNumber);
+    for (let c=0;c<25;c++) {
+      const address = XLSX.utils.encode_cell({r,c});
+      const cell = worksheet[address] || (worksheet[address]={t:'s',v:''});
+      if (rowNumber===1) cell.s = titleStyle;
+      else if (isHeader) {
+        cell.s = headerStyle;
+        if (c===9) cell.z = '0"mm"';
+        if (c===16) cell.z = '0';
+      } else if (pageTopRows.includes(rowNumber)) {
+        if (c===0 || c===3) cell.s = pageLabelStyle;
+        else if (c>=4 && c<=7) cell.s = dateStyle;
+      } else if (pageAccountRows.includes(rowNumber)) {
+        if (c>=9 && c<=11) cell.s = accountStyle;
+      } else {
+        const whiteFillColumns = [3,4,9,10,11,12,13,14,15,16,17,24];
+        cell.s = whiteFillColumns.includes(c)
+          ? {...bodyStyle,fill:{patternType:'solid',fgColor:{rgb:'FFFFFF'}}}
+          : bodyStyle;
+        if (numberFormats[c]) cell.z = numberFormats[c];
+      }
+      if (cell.f && typeof cell.v === 'number') cell.t = 'n';
+      else if (cell.f && typeof cell.v === 'string') cell.t = 's';
+      if ([3,23].includes(c) && !isHeader && !pageTopRows.includes(rowNumber) && !pageAccountRows.includes(rowNumber)) cell.z = '@';
+    }
+  }
+  return worksheet;
+}
+function makeWorkbook() {
+  const worksheet = buildWorksheet(report);
+  const workbook = XLSX.utils.book_new();
+  const label = dateLabel(report).replaceAll('/','-');
+  XLSX.utils.book_append_sheet(workbook,worksheet,label.slice(0,31));
+  workbook.Props = {
+    Title:'Dispatch Invoice Report',
+    Subject:'Generated from SAP raw export',
+    Author:'Dispatch Report Generator',
+    Comments:'Generated locally from the supplied raw SAP workbook.'
+  };
+  workbook.CalcPr = {calcMode:'auto',fullCalcOnLoad:true,forceFullCalc:true};
+  return workbook;
+}
+
+function expectedWorkbookTotals(data) {
+  const lineCount = data.groups.reduce((sum,group)=>sum+group.items.length,0);
+  let pageCount = 0;
+  let pageLines = 0;
+  for (const group of data.groups) {
+    if (pageLines && pageLines + group.items.length > 41) {
+      pageCount++;
+      pageLines = 0;
+    }
+    pageLines += group.items.length;
+  }
+  if (pageLines) pageCount++;
+  const totalRow = lineCount + pageCount * 3 + 2;
+  return {
+    totalRow,
+    lineCount,
+    pageCount,
+    totalQty:data.groups.reduce((sum,group)=>sum+group.totalQty,0),
+    totalGross:data.groups.reduce((sum,group)=>sum+group.gross,0),
+    totalFreight:data.groups.reduce((sum,group)=>sum+group.freightAmount,0),
+    expectedFormulaCount:lineCount*4 + data.groups.length*4 + 4 + Math.max(0,pageCount-1)
+  };
+}
+
+function verifyWorkbookRoundTrip(workbook, data) {
+  const expected = expectedWorkbookTotals(data);
+  const bytes = XLSX.write(workbook,{bookType:'xlsx',type:'array',compression:true});
+  const reopened = XLSX.read(bytes,{type:'array',cellFormula:true,cellNF:true,cellStyles:true});
+  const sheetName = reopened.SheetNames[0];
+  const sheet = sheetName && reopened.Sheets[sheetName];
+  if (!sheet) throw new Error('Excel verification failed: the generated worksheet could not be reopened.');
+
+  let formulaCount = 0;
+  for (const [address,cell] of Object.entries(sheet)) {
+    if (address.startsWith('!') || !cell || !cell.f) continue;
+    formulaCount++;
+    if (cell.v === undefined || cell.v === null || (typeof cell.v === 'number' && !Number.isFinite(cell.v))) {
+      throw new Error(`Excel verification failed: formula result is missing or invalid in ${address}.`);
+    }
+  }
+  if (formulaCount < expected.expectedFormulaCount) {
+    throw new Error(`Excel verification failed: expected at least ${expected.expectedFormulaCount} cached formulas, found ${formulaCount}.`);
+  }
+
+  const checks = [
+    ['L',expected.totalQty],['S',expected.totalGross],['U',expected.totalGross],['W',expected.totalFreight]
+  ];
+  for (const [column,expectedValue] of checks) {
+    const address = `${column}${expected.totalRow}`;
+    const actual = sheet[address] && sheet[address].v;
+    if (typeof actual !== 'number' || Math.abs(actual-expectedValue) > Math.max(0.01,Math.abs(expectedValue)*1e-10)) {
+      throw new Error(`Excel verification failed: ${address} cached total does not match the calculated report total.`);
+    }
+  }
+
+  if (!sheet['K5'] || sheet['K5'].z !== '0.00' || !sheet['R5'] || sheet['R5'].z !== '0') {
+    throw new Error('Excel verification failed: the reference number formats were not preserved.');
+  }
+  if (!Array.isArray(sheet['!cols']) || ![12,13,14].every(index=>sheet['!cols'][index] && sheet['!cols'][index].hidden)) {
+    throw new Error('Excel verification failed: calculation columns M–O are not hidden.');
+  }
+  if (!Array.isArray(sheet['!merges']) || sheet['!merges'].length < data.groups.length*16) {
+    throw new Error('Excel verification failed: invoice cell merges are missing.');
+  }
+  return {bytes,formulaCount,totalRow:expected.totalRow};
+}
+
+$('file').addEventListener('change',event=>{
+  const file = event.target.files && event.target.files[0];
+  report = null;
+  $('generate').disabled = !file;
+  $('previewPanel').hidden = true;
+  $('stats').hidden = true;
+  $('status').className = 'status';
+  $('status').textContent = '';
+  $('downloadNote').textContent = '';
+  $('fileName').textContent = file ? file.name : 'No file selected';
+  if (!file) return;
+  if (file.size > MAX_FILE_BYTES) {
+    $('generate').disabled = true;
+    $('status').className = 'status error';
+    $('status').textContent = 'File is larger than 50 MB. Split the workbook or export only the required dispatch data.';
+    return;
+  }
+  sourceName = file.name.replace(/\.[^.]+$/,'').replace(/[^a-z0-9_-]/gi,'_') || 'dispatch';
+});
+
+$('generate').addEventListener('click',async()=>{
+  const file = $('file').files && $('file').files[0];
+  if (!file) return;
+  const button = $('generate');
+  button.disabled = true;
+  button.textContent = 'Processing…';
+  report = null;
+  $('previewPanel').hidden = true;
+  $('stats').hidden = true;
+  $('status').className = 'status';
+  $('status').textContent = '';
+  try {
+    const buffer = await file.arrayBuffer();
+    report = parseWorkbook(buffer);
+    showPreview();
+    const messages = [];
+    if (report.skippedBlankReference) messages.push(`Skipped ${report.skippedBlankReference} row(s) with blank invoice reference.`);
+    if (report.skippedCancelled) messages.push(`Excluded ${report.skippedCancelled} cancelled row(s).`);
+    if (report.skippedNonInvoice) messages.push(`Excluded ${report.skippedNonInvoice} non-invoice row(s).`);
+    if (report.warnings.length) messages.push(...report.warnings);
+    $('status').className = report.warnings.length || report.skippedBlankReference || report.skippedCancelled || report.skippedNonInvoice ? 'status warn' : 'status ok';
+    $('status').textContent = `Report prepared from worksheet "${report.sheetName}". ${report.processedRows} source line(s), ${report.groups.length} invoice(s), ${report.groups.reduce((sum,g)=>sum+g.items.length,0)} material line(s).` + (messages.length ? `\n\nChecks:\n• ${messages.join('\n• ')}` : '\nNo data consistency warnings were found.');
+  } catch (error) {
+    report = null;
+    $('status').className = 'status error';
+    $('status').textContent = error instanceof Error ? error.message : 'Unable to process this workbook.';
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Generate Excel report';
+  }
+});
+
+$('download').addEventListener('click',()=>{
+  try {
+    if (!report) throw new Error('Generate the report first.');
+    const workbook = makeWorkbook();
+    const verified = verifyWorkbookRoundTrip(workbook,report);
+    const date = dateLabel(report).replaceAll('.','-');
+    const filename = `${sourceName}_dispatch_report_${date}.xlsx`;
+    const blob = new Blob([verified.bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(()=>URL.revokeObjectURL(url),1500);
+    $('downloadNote').textContent = `Verified ${verified.formulaCount} cached formulas, totals and report formatting. Download started.`;
+    $('status').className = 'status ok';
+    $('status').textContent = `Excel round-trip verification passed. ${verified.formulaCount} formulas have cached results; invoice totals, number formats, hidden calculation columns and merged cells were checked.`;
+  } catch (error) {
+    $('status').className = 'status error';
+    $('status').textContent = error instanceof Error ? error.message : 'Could not create or verify the workbook.';
+  }
+});
+</script>
+</body>
+</html>
