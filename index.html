@@ -54,7 +54,7 @@ table{border-collapse:collapse;width:100%;font-size:12px;white-space:nowrap}th,t
   <p class="muted small">Preview shows normalized invoice details, material rows, rates and freight. The downloaded workbook contains the full report layout and Excel formulas.</p>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>SL</th><th>Invoice No.</th><th>Party</th><th>Address / State</th><th>Vehicle No.</th><th>Material</th><th>Qty (MT)</th><th>Basic Rate</th><th>GST %</th><th>Freight Rate</th><th>Freight Amount</th><th>Remarks</th></tr></thead>
+      <thead><tr><th>SL</th><th>Invoice No.</th><th>Party</th><th>Address / State</th><th>Vehicle No.</th><th>Material</th><th>Qty (MT)</th><th>Basic Rate</th><th>Insurance Rate</th><th>GST %</th><th>Freight Rate</th><th>Freight Amount</th><th>Remarks</th></tr></thead>
       <tbody id="previewBody"></tbody>
     </table>
   </div>
@@ -71,6 +71,7 @@ table{border-collapse:collapse;width:100%;font-size:12px;white-space:nowrap}th,t
     <div class="rule"><b>Address / state</b><span class="muted small">State names are standardized to clean uppercase text; a trailing “(New)” marker is removed.</span></div>
     <div class="rule"><b>Vehicle number</b><span class="muted small">Recognized Indian registration numbers are standardized with a hyphen before the last four digits, e.g. AP16TJ-5656.</span></div>
     <div class="rule"><b>Material standardization</b><span class="muted small">Spacing and bracket variations are normalized, e.g. TMT BAR 8MM (BOF) → 8mm[BOF]. Different rates remain separate rows.</span></div>
+    <div class="rule"><b>Insurance for C&amp;I invoices</b><span class="muted small">Only invoices with RAW Incoterms C&amp;I receive an insurance rate of ₹21/MT in Column N, for every material diameter. EXW and FOR invoices leave Column N blank. GST is calculated on Basic Rate + Insurance Rate.</span></div>
     <div class="rule"><b>GST and values</b><span class="muted small">The effective GST rate is inferred from Net Sales when available. This handles intra-state rows where IGST Rate is 0 but total GST is still 18%.</span></div>
     <div class="rule"><b>Invoice-level freight</b><span class="muted small">Freight Inclusive amounts are summed across the material lines of each invoice. Freight Rate = invoice freight total ÷ invoice quantity; Freight Amount is the invoice freight total. Columns V and W are merged by invoice.</span></div>
     <div class="rule"><b>Other transport</b><span class="muted small">SELF BY PARTY → EX BY PARTY. Any other transporter name → EX BY transporter name.</span></div>
@@ -85,6 +86,7 @@ table{border-collapse:collapse;width:100%;font-size:12px;white-space:nowrap}th,t
 
 const $ = id => document.getElementById(id);
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
+const CI_INSURANCE_RATE_PER_MT = 21;
 let report = null;
 let sourceName = 'dispatch';
 
@@ -183,6 +185,10 @@ function isForIncoterm(value) {
   return /^FOR(?:\b|\/|-|\s)/.test(term) || term === 'FOR';
 }
 
+function isCIIncoterm(value) {
+  return /^C\s*&\s*I$/i.test(clean(value));
+}
+
 function isSelfByParty(value) {
   return clean(value).toUpperCase().replace(/[\s_-]+/g,' ').trim() === 'SELF BY PARTY';
 }
@@ -266,6 +272,7 @@ function parseWorkbook(buffer) {
     const gstRate = effectiveGstRate(netSales,qty,basicRate,igstRate,rowNumber);
     const incoterm = clean(row[map.incoterms]);
     const forTerm = isForIncoterm(incoterm);
+    const insuranceRate = 0;
     const freightRaw = row[map.freight];
     const freightInclusive = numberValue(freightRaw,'Freight Inclusive',rowNumber,false);
     if (freightInclusive !== null && freightInclusive < 0) {
@@ -276,8 +283,10 @@ function parseWorkbook(buffer) {
     const item = {
       reference, party:displayParty(partyRaw), partyCompare:compareParty(partyRaw),
       state, vehicle:normalizeVehicle(vehicleRaw), material:normalizeMaterial(materialRaw),
-      qty, basicRate, gstRate, tax:basicRate*gstRate/100,
-      rate:basicRate*(1+gstRate/100), value:qty*basicRate*(1+gstRate/100),
+      qty, basicRate, insuranceRate, gstRate,
+      tax:(basicRate+insuranceRate)*gstRate/100,
+      rate:(basicRate+insuranceRate)*(1+gstRate/100),
+      value:qty*(basicRate+insuranceRate)*(1+gstRate/100),
       incoterm, forTerm, freightInclusive,
       transporter, entryDate:map.date === undefined ? null : row[map.date],
       sourceRow:rowNumber
@@ -316,6 +325,13 @@ function parseWorkbook(buffer) {
 
     const incoterms = [...new Set(invoice.items.map(item=>item.incoterm.toUpperCase()).filter(Boolean))];
     if (incoterms.length > 1) throw new Error(`Invoice ${invoice.reference} has conflicting Incoterms values.`);
+    invoice.isCI = incoterms.some(isCIIncoterm);
+    for (const item of invoice.items) {
+      item.insuranceRate = invoice.isCI ? CI_INSURANCE_RATE_PER_MT : 0;
+      item.tax = (item.basicRate + item.insuranceRate) * item.gstRate / 100;
+      item.rate = item.basicRate + item.insuranceRate + item.tax;
+      item.value = item.qty * item.rate;
+    }
 
     if (invoice.isFor) {
       if (!invoice.transporter) throw new Error(`Invoice ${invoice.reference} is marked FOR but has no Transporter Name.`);
@@ -377,7 +393,7 @@ function showPreview() {
       const values = [
         index===0?serial:'', index===0?group.reference:'', index===0?group.party:'',
         index===0?group.state:'', index===0?group.vehicle:'', item.material,
-        formatNumber(item.qty,3), formatNumber(item.basicRate,2), `${formatNumber(item.gstRate,2)}%`,
+        formatNumber(item.qty,3), formatNumber(item.basicRate,2), item.insuranceRate ? formatNumber(item.insuranceRate,2) : '—', `${formatNumber(item.gstRate,2)}%`,
         index===0?formatNumber(group.freightRate,2):'',
         index===0?formatNumber(group.freightAmount,2):'',
         index===0?group.remarks:''
@@ -424,7 +440,7 @@ function buildWorksheet(data) {
     border:{bottom:{style:'hair',color:{rgb:'CBD5E1'}}}
   };
   const numberFormats = {
-    10:'0.00', 11:'0.00', 12:'0.00', 14:'0.00', 15:'0.00', 16:'0.00',
+    10:'0.00', 11:'0.00', 12:'0.00', 13:'0.00', 14:'0.00', 15:'0.00', 16:'0.00',
     17:'0', 18:'0', 19:'0.00', 20:'0', 21:'0', 22:'0'
   };
   const numberStyle = {
@@ -478,11 +494,12 @@ function buildWorksheet(data) {
       const rateCell = `P${rowNumber}`;
       const gstPercent = Number(item.gstRate.toFixed(2));
       const sheetRow = aoa[rowNumber-1];
-      sheetRow[13] = '';
-      const taxValue = item.basicRate * item.gstRate / 100;
-      const rateValue = item.basicRate + taxValue;
+      sheetRow[13] = item.insuranceRate > 0 ? item.insuranceRate : '';
+      const insuranceRate = item.insuranceRate || 0;
+      const taxValue = (item.basicRate + insuranceRate) * item.gstRate / 100;
+      const rateValue = item.basicRate + insuranceRate + taxValue;
       const value = item.qty * rateValue;
-      sheetRow[14] = formulaCell(`M${rowNumber}*${gstPercent}%`,taxValue);
+      sheetRow[14] = formulaCell(`(M${rowNumber}+N${rowNumber})*${gstPercent}%`,taxValue);
       sheetRow[15] = formulaCell(`M${rowNumber}+N${rowNumber}+${taxCell}`,rateValue);
       sheetRow[16] = formulaCell(`${rateCell}`,rateValue);
       sheetRow[17] = formulaCell(`K${rowNumber}*Q${rowNumber}`,value);
