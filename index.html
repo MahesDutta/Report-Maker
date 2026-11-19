@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Dispatch Invoice Report Generator</title>
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <style>
 :root{--navy:#142d4e;--blue:#235a91;--pale:#eef4fa;--ink:#1c2938;--muted:#637286;--line:#d8e0e9;--green:#18794e;--amber:#9a6200;--red:#b42318}
 *{box-sizing:border-box}body{margin:0;background:#f3f6fa;color:var(--ink);font:14px/1.5 Inter,system-ui,-apple-system,Segoe UI,Arial,sans-serif}
@@ -710,12 +711,79 @@ $('generate').addEventListener('click',async()=>{
   }
 });
 
-$('download').addEventListener('click',()=>{
+$('download').addEventListener('click',async()=>{
   try {
     if (!report) throw new Error('Generate the report first.');
+    if (typeof JSZip === 'undefined') throw new Error('The Excel formatting library did not load. Refresh the page and try again.');
+
     const workbook = makeWorkbook();
     const date = dateLabel(report).replaceAll('.','-');
-    XLSX.writeFile(workbook,`${sourceName}_dispatch_report_${date}.xlsx`,{compression:true});
+    const filename = `${sourceName}_dispatch_report_${date}.xlsx`;
+    const workbookBytes = XLSX.write(workbook,{
+      bookType:'xlsx',
+      type:'array',
+      compression:true
+    });
+
+    const zip = await JSZip.loadAsync(workbookBytes);
+    const sheetPath = 'xl/worksheets/sheet1.xml';
+    const sheetFile = zip.file(sheetPath);
+    if (!sheetFile) throw new Error('Could not locate the generated worksheet XML.');
+
+    let sheetXml = await sheetFile.async('string');
+    const referenceWidths = [
+      3.7109375,11.5703125,8.5703125,14.85546875,20.42578125,
+      9.7109375,6.85546875,11,9.42578125,11.5703125,
+      8.42578125,8.140625,9.42578125,6,8.42578125,
+      13,9.85546875,13,10.7109375,8.42578125,
+      10.42578125,9,8.28515625,8.28515625,17.28515625
+    ];
+
+    let updatedColumns = 0;
+    sheetXml = sheetXml.replace(/<col\b([^>]*)\/>/g,(tag,attributes)=>{
+      const minMatch = attributes.match(/\bmin="(\d+)"/);
+      const maxMatch = attributes.match(/\bmax="(\d+)"/);
+      if (!minMatch || !maxMatch) return tag;
+      const min = Number(minMatch[1]);
+      const max = Number(maxMatch[1]);
+      if (min !== max || min < 1 || min > referenceWidths.length) return tag;
+      const width = referenceWidths[min-1];
+      if (!Number.isFinite(width) || width <= 0) return tag;
+      updatedColumns++;
+      const updatedAttributes = /\bwidth="[^"]*"/.test(attributes)
+        ? attributes.replace(/\bwidth="[^"]*"/,`width="${width}"`)
+        : `${attributes} width="${width}"`;
+      return `<col${updatedAttributes}/>`;
+    });
+    if (updatedColumns !== referenceWidths.length) {
+      throw new Error(`Could not apply all reference column widths (${updatedColumns}/${referenceWidths.length}).`);
+    }
+
+    const pageSetupTag = '<pageSetup paperSize="9" orientation="landscape" scale="66"/>';
+    if (/<pageSetup\b[^>]*\/>/.test(sheetXml)) {
+      sheetXml = sheetXml.replace(/<pageSetup\b[^>]*\/>/,pageSetupTag);
+    } else if (/<pageMargins\b[^>]*\/>/.test(sheetXml)) {
+      sheetXml = sheetXml.replace(/(<pageMargins\b[^>]*\/>)/,`$1${pageSetupTag}`);
+    } else {
+      throw new Error('Could not locate the worksheet print-margins section.');
+    }
+
+    zip.file(sheetPath,sheetXml);
+    const blob = await zip.generateAsync({
+      type:'blob',
+      mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      compression:'DEFLATE',
+      compressionOptions:{level:6}
+    });
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(()=>URL.revokeObjectURL(url),1000);
     $('downloadNote').textContent = 'Excel download started.';
   } catch (error) {
     $('status').className = 'status error';
