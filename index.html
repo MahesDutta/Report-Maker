@@ -535,8 +535,8 @@ function buildWorksheet(data) {
       const taxValue = (item.basicRate + insuranceRate) * item.gstRate / 100;
       const rateValue = item.basicRate + insuranceRate + taxValue;
       const value = item.qty * rateValue;
-      sheetRow[14] = formulaCell(`(M${rowNumber}+N${rowNumber})*${gstPercent}%`,taxValue);
-      sheetRow[15] = formulaCell(`M${rowNumber}+N${rowNumber}+${taxCell}`,rateValue);
+      sheetRow[14] = formulaCell(`(M${rowNumber}+N(N${rowNumber}))*${gstPercent}%`,taxValue);
+      sheetRow[15] = formulaCell(`M${rowNumber}+N(N${rowNumber})+${taxCell}`,rateValue);
       sheetRow[16] = formulaCell(`${rateCell}`,rateValue);
       sheetRow[17] = formulaCell(`K${rowNumber}*Q${rowNumber}`,value);
     });
