@@ -423,36 +423,68 @@ function showPreview() {
 function buildWorksheet(data) {
   const aoa = [];
   const merges = [];
+
+  const thinBlack = {style:'thin',color:{rgb:'FF000000'}};
+  const fullBorder = {
+    top:{...thinBlack}, bottom:{...thinBlack},
+    left:{...thinBlack}, right:{...thinBlack}
+  };
   const titleStyle = {
-    font:{bold:true,size:14,color:{rgb:'FFFFFF'}},
-    fill:{fgColor:{rgb:'17365D'}},
-    alignment:{horizontal:'left',vertical:'center'}
+    font:{name:'Arial Black',sz:12,bold:true,color:{rgb:'FF000000'}},
+    fill:{patternType:'solid',fgColor:{rgb:'FF92D050'}},
+    alignment:{horizontal:'center',vertical:'center'},
+    border:{top:{...thinBlack},bottom:{...thinBlack},left:{...thinBlack},right:{...thinBlack}}
   };
   const headerStyle = {
-    font:{bold:true,color:{rgb:'FFFFFF'},size:9},
-    fill:{fgColor:{rgb:'24476B'}},
+    font:{name:'Calibri',sz:10,bold:true,color:{rgb:'FF000000'}},
+    fill:{patternType:'solid',fgColor:{rgb:'FFFFFF00'}},
     alignment:{horizontal:'center',vertical:'center',wrapText:true},
-    border:{top:{style:'thin',color:{rgb:'FFFFFF'}},bottom:{style:'thin',color:{rgb:'FFFFFF'}}}
+    border:fullBorder
   };
-  const bodyStyle = {
-    font:{name:'Arial',size:9,color:{rgb:'17212B'}},
-    alignment:{vertical:'center'},
-    border:{bottom:{style:'hair',color:{rgb:'CBD5E1'}}}
+  const bodyBase = {
+    font:{name:'Calibri',sz:10,bold:true,color:{rgb:'FF000000'}},
+    alignment:{horizontal:'center',vertical:'center',wrapText:true},
+    border:fullBorder
+  };
+  const whiteBodyStyle = {
+    ...bodyBase,
+    fill:{patternType:'solid',fgColor:{rgb:'FFFFFFFF'}}
+  };
+  const metadataStyle = {
+    font:{name:'Calibri',sz:10,bold:true,color:{rgb:'FF000000'}},
+    alignment:{horizontal:'center',vertical:'center',wrapText:true}
+  };
+  const greenAccountStyle = {
+    ...metadataStyle,
+    fill:{patternType:'solid',fgColor:{rgb:'FF92D050'}},
+    border:{top:{...thinBlack},bottom:{...thinBlack}}
   };
   const numberFormats = {
-    10:'0.00', 11:'0.00', 12:'0.00', 13:'0.00', 14:'0.00', 15:'0.00', 16:'0.00',
-    17:'0', 18:'0', 19:'0.00', 20:'0', 21:'0', 22:'0'
+    0:'0', 1:'@', 2:'0"/-"', 3:'@',
+    10:'0.00', 11:'0.00',
+    12:'0.00', 13:'0.00', 14:'0.00', 15:'0.00', 16:'0.00',
+    17:'0', 18:'0', 19:'0.00', 20:'0', 21:'0', 22:'0', 23:'@'
   };
-  const numberStyle = {
-    ...bodyStyle,
-    alignment:{horizontal:'right',vertical:'center'}
-  };
-  const widths = [3.71,11.57,8.57,14.86,20.43,9.71,6.86,11,9.43,11.57,8.43,8.14,9.43,6,8.43,9.85,9.85,13,10.71,8.43,10.43,9,8.29,8.29,17.29];
+  const whiteColumns = new Set([3,4,9,10,11,12,13,14,15,16,17,24]);
+  const widths = [
+    3.7109375,11.5703125,8.5703125,14.85546875,20.42578125,
+    9.7109375,6.85546875,11,9.42578125,11.5703125,
+    8.42578125,8.140625,9.42578125,6,8.42578125,
+    13,9.85546875,13,10.7109375,8.42578125,
+    10.42578125,9,8.28515625,8.28515625,17.28515625
+  ];
 
   aoa.push(['RASHIDHAN [OMPL-9] [TMT DESPATCH] - PARTY']);
-  aoa.push(['','','','DATE-',dateLabel(data)]);
+  aoa.push([' Page No: 1','','','DATE-',dateLabel(data)]);
   aoa.push(['','','','','','','','','','A/C-OMPL']);
-  aoa.push(['SL No','Agent','Avg. Conv','Inv.No','Party','Code','Type','Address','Lorry No','Size','Qty','Total Qty.','Basic Rate','','IGST Amount','Rate Incl. GST','Rate','Value','Gross Value','Insurance','Net Value','Freight Rate','Freight Amount','Party Balance','Remarks']);
+  // Match the reference workbook's header row. M:P are intentionally blank;
+  // M, N and O are calculation columns and remain hidden as in the template.
+  aoa.push([
+    'SL No','Agent','Avg. Conv ','Inv.No','Party','Code','Type','Address',
+    'Lorry No','Size','Qty','Total Qty.','','','','','Rate','Value',
+    'Gross Value','Insurance','Net Value','Freight Rate','Freight Amount',
+    'Party Balance  ','Remarks'
+  ]);
 
   let serial = 0;
   const invoiceFirstRows = [];
@@ -484,12 +516,14 @@ function buildWorksheet(data) {
   }
 
   const firstDataRow = 5;
-  const lastDataRow = aoa.length;
   for (const group of data.groups) {
-    const start = firstDataRow + data.groups.slice(0,data.groups.indexOf(group)).reduce((sum,g)=>sum+g.items.length,0);
-    const end = start + group.items.length - 1;
+    const priorLines = data.groups.slice(0,data.groups.indexOf(group))
+      .reduce((sum,g)=>sum+g.items.length,0);
+    const startRow = firstDataRow + priorLines;
+    const endRow = startRow + group.items.length - 1;
+
     group.items.forEach((item,index)=>{
-      const rowNumber = start + index;
+      const rowNumber = startRow + index;
       const taxCell = `O${rowNumber}`;
       const rateCell = `P${rowNumber}`;
       const gstPercent = Number(item.gstRate.toFixed(2));
@@ -504,14 +538,16 @@ function buildWorksheet(data) {
       sheetRow[16] = formulaCell(`${rateCell}`,rateValue);
       sheetRow[17] = formulaCell(`K${rowNumber}*Q${rowNumber}`,value);
     });
-    const first = start;
-    const last = end;
-    aoa[first-1][11] = formulaCell(`SUM(K${first}:K${last})`,group.totalQty);
-    aoa[first-1][18] = formulaCell(`SUM(R${first}:R${last})`,group.gross);
-    aoa[first-1][19] = 0;
-    aoa[first-1][20] = formulaCell(`S${first}+T${first}`,group.gross);
-    aoa[first-1][21] = group.freightRate;
-    aoa[first-1][22] = formulaCell(`V${first}*L${first}`,group.freightAmount);
+
+    aoa[startRow-1][11] = formulaCell(`SUM(K${startRow}:K${endRow})`,group.totalQty);
+    aoa[startRow-1][18] = formulaCell(`SUM(R${startRow}:R${endRow})`,group.gross);
+    // Column T remains the separate invoice-level insurance adjustment from
+    // the supplied format. The C&I per-MT rate is already included in N and
+    // therefore in the material line values; do not add it a second time.
+    aoa[startRow-1][19] = 0;
+    aoa[startRow-1][20] = formulaCell(`S${startRow}+T${startRow}`,group.gross);
+    aoa[startRow-1][21] = group.freightRate;
+    aoa[startRow-1][22] = formulaCell(`V${startRow}*L${startRow}`,group.freightAmount);
   }
 
   const totalRowNumber = aoa.length + 1;
@@ -535,44 +571,78 @@ function buildWorksheet(data) {
   aoa.push(bendRow);
 
   const worksheet = XLSX.utils.aoa_to_sheet(aoa);
+
+  // Materialize blank cells before applying styles so borders and fills also
+  // render across empty cells and merged invoice-level ranges.
+  for (let r=0;r<aoa.length;r++) {
+    for (let c=0;c<25;c++) {
+      const address = XLSX.utils.encode_cell({r,c});
+      if (!worksheet[address]) worksheet[address] = {t:'s',v:''};
+    }
+  }
+
   worksheet['!merges'] = merges;
   worksheet['!merges'].push(
     {s:{r:0,c:0},e:{r:0,c:24}},
     {s:{r:1,c:4},e:{r:1,c:7}},
     {s:{r:2,c:9},e:{r:2,c:11}}
   );
-  worksheet['!cols'] = widths.map(width=>({wch:width}));
-  worksheet['!rows'] = [{hpt:25},{hpt:20},{hpt:19},{hpt:30},...Array(aoa.length-4).fill({hpt:18})];
-  worksheet['!pageSetup'] = {orientation:'landscape',paperSize:9,fitToWidth:1,fitToHeight:0};
-  worksheet['!margins'] = {left:0.25,right:0.25,top:0.45,bottom:0.45,header:0.2,footer:0.2};
-  worksheet['!autofilter'] = {ref:`A4:Y${totalRowNumber}`};
+
+  worksheet['!cols'] = widths.map((wch,index)=>({
+    wch,
+    ...(index>=12 && index<=14 ? {hidden:true} : {})
+  }));
+
+  worksheet['!rows'] = aoa.map((_,index)=>{
+    if (index===0) return {hpt:16.5};
+    if (index===3 || index===4) return {hpt:25.5};
+    if (index>=5) return {hpt:18};
+    return {};
+  });
+
+  worksheet['!pageSetup'] = {orientation:'landscape',paperSize:9,scale:66};
+  worksheet['!margins'] = {left:0,right:0,top:0,bottom:0,header:0.315,footer:0};
+  worksheet['!autofilter'] = {ref:`J4:K${totalRowNumber}`};
 
   for (let r=0;r<aoa.length;r++) {
     for (let c=0;c<25;c++) {
       const address = XLSX.utils.encode_cell({r,c});
       const cell = worksheet[address];
       if (!cell) continue;
-      if (r===0) cell.s = titleStyle;
-      else if (r===3) cell.s = headerStyle;
-      else {
-        cell.s = bodyStyle;
+
+      if (r===0) {
+        cell.s = titleStyle;
+      } else if (r===3) {
+        cell.s = {...headerStyle};
+        if (c===9) cell.s = {...headerStyle,numFmt:'0"mm"'};
+        if (c===16 || c===19) cell.s = {...headerStyle,numFmt:'0'};
+      } else if (r===2 && c>=9 && c<=11) {
+        cell.s = greenAccountStyle;
+      } else if (r===1) {
+        cell.s = metadataStyle;
+        if (c===4) cell.s = {
+          ...metadataStyle,
+          font:{name:'Calibri',sz:11,bold:true,color:{rgb:'FF000000'}},
+          fill:{patternType:'solid',fgColor:{rgb:'FFFFFFFF'}}
+        };
+      } else {
+        cell.s = whiteColumns.has(c) ? {...whiteBodyStyle} : {...bodyBase};
         if (Object.prototype.hasOwnProperty.call(numberFormats,c)) {
-          cell.s = {...numberStyle,numFmt:numberFormats[c]};
-        }
-        if ([3,8].includes(c)) cell.s = {...bodyStyle,alignment:{horizontal:'center',vertical:'center'}};
-        if (r===totalRowNumber-1) {
-          cell.s = {...headerStyle,fill:{fgColor:{rgb:'DCE6F1'}},font:{bold:true,color:{rgb:'17365D'},size:9}};
+          cell.s = {...cell.s,numFmt:numberFormats[c]};
         }
       }
+
       if (cell.f) {
         cell.t = 'n';
-        if (!Number.isFinite(cell.v)) throw new Error(`Missing cached result for formula cell ${address}.`);
+        if (!Number.isFinite(cell.v)) {
+          throw new Error(`Missing cached result for formula cell ${address}.`);
+        }
       }
     }
   }
+
   return worksheet;
 }
-
 function makeWorkbook() {
   const worksheet = buildWorksheet(report);
   const workbook = XLSX.utils.book_new();
